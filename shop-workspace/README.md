@@ -26,6 +26,18 @@ python ..\pyorbbecsdk\scripts\env_setup\setup_env.py
 python -m xarm_grasp.check_camera
 ```
 
+实时查看彩色相机画面（`Q`/`Esc` 退出，`S` 保存当前帧）：
+
+```powershell
+python -m xarm_grasp.camera_preview
+```
+
+同时查看与彩色画面对齐的深度图：
+
+```powershell
+python -m xarm_grasp.camera_preview --show-depth
+```
+
 ## 2. 小票 OCR 配置
 
 智谱 API Key 只放在当前终端环境变量中，不要写进代码或配置：

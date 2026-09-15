@@ -75,6 +75,7 @@ class GeminiCamera:
     def __init__(self, config):
         self.config = config
         self.pipeline = None
+        self.frames_seen = 0
 
     def __enter__(self):
         try:
@@ -128,11 +129,13 @@ class GeminiCamera:
         self.align = ob.AlignFilter(align_to_stream=ob.OBStreamType.COLOR_STREAM)
         self.pipeline.enable_frame_sync()
         self.pipeline.start(config)
+        # Warm up once per camera session.  Keeping this counter on the object is
+        # important for video loops: capture() is called once per displayed frame.
+        self.frames_seen = 0
         return self
 
     def capture(self):
         deadline = time.monotonic() + self.config.get("timeout_s", 10)
-        count = 0
         while time.monotonic() < deadline:
             frames = self.pipeline.wait_for_frames(1000)
             if frames is None:
@@ -145,8 +148,8 @@ class GeminiCamera:
             depth_frame = aligned.get_depth_frame()
             if color_frame is None or depth_frame is None:
                 continue
-            count += 1
-            if count <= self.config.get("warmup_frames", 15):
+            self.frames_seen += 1
+            if self.frames_seen <= self.config.get("warmup_frames", 15):
                 continue
             if depth_frame.get_format() != self.ob.OBFormat.Y16:
                 raise RuntimeError(f"Expected Y16 depth, got {depth_frame.get_format()}")
