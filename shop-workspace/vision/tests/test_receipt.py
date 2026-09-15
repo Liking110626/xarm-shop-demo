@@ -1,10 +1,12 @@
 import unittest
+from unittest.mock import patch
 
 from vision.ocr import (
     extract_ocr_text,
     match_receipt_products,
     normalize_receipt_text,
     select_receipt_product,
+    validate_receipt_settings,
 )
 
 
@@ -18,6 +20,20 @@ CONFIG = {
 
 
 class ReceiptTests(unittest.TestCase):
+    def test_key_in_env_name_is_rejected_without_disclosure(self):
+        misplaced_key = 'test-secret.test-token'
+        with self.assertRaises(ValueError) as caught:
+            validate_receipt_settings({'receipt': {'api_key_env': misplaced_key}})
+        self.assertNotIn(misplaced_key, str(caught.exception))
+        self.assertIn('environment variable name', str(caught.exception))
+
+    def test_key_is_read_from_named_environment_variable(self):
+        with patch.dict('os.environ', {'ZHIPUAI_API_KEY': 'test-only'}, clear=True):
+            self.assertEqual(validate_receipt_settings({})[1], 'test-only')
+        with patch.dict('os.environ', {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, 'environment variable is not set'):
+                validate_receipt_settings({})
+
     def test_normalize_and_extract_markdown(self):
         self.assertEqual(normalize_receipt_text(" 可 乐：1\nCOKE "), "可乐1coke")
         self.assertEqual(extract_ocr_text({"md_results": [{"text": "雪碧"}, "芬达"]}),

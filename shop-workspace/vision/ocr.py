@@ -57,7 +57,6 @@ def match_receipt_products(text, config):
             })
     return matches
 
-
 def select_receipt_product(text, config):
     matches = match_receipt_products(text, config)
     if not matches:
@@ -72,9 +71,15 @@ def select_receipt_product(text, config):
 def validate_receipt_settings(config):
     receipt = config.get("receipt", {})
     env_name = receipt.get("api_key_env", "ZHIPUAI_API_KEY")
+    if not isinstance(env_name, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', env_name):
+        raise ValueError(
+            'receipt.api_key_env must be an environment variable name such as '
+            'ZHIPUAI_API_KEY, not the API key itself')
     api_key = os.environ.get(env_name, "").strip()
     if not api_key:
-        raise RuntimeError(f"{env_name} is not set")
+        raise RuntimeError(
+            'OCR API key environment variable is not set; set the variable named '
+            'by receipt.api_key_env in the terminal before running')
     timeout = float(receipt.get("timeout_s", 120))
     if timeout <= 0:
         raise ValueError("receipt.timeout_s must be positive")

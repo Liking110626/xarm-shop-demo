@@ -12,7 +12,7 @@
     ],
     "tcp_speed_mm_s": 20,
     "tcp_acc_mm_s2": 100,
-    "joint_speed_deg_s": 5,
+    "joint_speed_deg_s": 15,
     "joint_acc_deg_s2": 20
   },
   "camera": {
@@ -94,7 +94,7 @@
       "class_id": 1,
       "open_position": 0,
       "close_position": 85,
-      "grasp_depth_offset_mm": 27
+      "grasp_depth_offset_mm": 42
     },
     "芬达罐装": {
       "aliases": [
@@ -105,7 +105,7 @@
       "class_id": 2,
       "open_position": 0,
       "close_position": 85,
-      "grasp_depth_offset_mm": 27
+      "grasp_depth_offset_mm": 42
     },
     "可口可乐罐装": {
       "aliases": [
@@ -117,7 +117,7 @@
       "class_id": 0,
       "open_position": 0,
       "close_position": 85,
-      "grasp_depth_offset_mm": 27
+      "grasp_depth_offset_mm": 42
     },
     "东方树叶茉莉花茶": {
       "aliases": [
@@ -128,7 +128,7 @@
       "class_id": 9,
       "open_position": 0,
       "close_position": 81,
-      "grasp_depth_offset_mm": 30
+      "grasp_depth_offset_mm": 45
     },
     "名仁苏打水饮料": {
       "aliases": [
@@ -138,7 +138,7 @@
       "class_id": 8,
       "open_position": 0,
       "close_position": 89,
-      "grasp_depth_offset_mm": 25
+      "grasp_depth_offset_mm": 40
     },
     "水溶C100瓶装": {
       "aliases": [
@@ -149,7 +149,7 @@
       "class_id": 5,
       "open_position": 0,
       "close_position": 95,
-      "grasp_depth_offset_mm": 25
+      "grasp_depth_offset_mm": 40
     }
   },
   "tool_motion": {
@@ -166,6 +166,17 @@
     "depth_axis": "z",
     "approach_axis_sign": 1,
     "lift_axis_sign": -1
+  },
+  "grasp_observation_fallback": {
+    "type": "joint",
+    "values": [
+      12.9,
+      38.8,
+      -72.4,
+      -80.1,
+      103.1,
+      -35.5
+    ]
   },
   "grasp_observation": {
     "type": "joint",

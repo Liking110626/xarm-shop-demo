@@ -1,20 +1,44 @@
 """YOLO product detection and RGB-D localization. No robot connection or motion."""
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 import numpy as np
 from xarm_grasp.config import DEFAULT_CONFIG, load, write, resolve_entry
 from xarm_grasp.coordinates import pixel_to_camera, camera_to_tcp
 
 
-def detect(model, frame, product, threshold):
-    result = model.predict(frame['bgr'], conf=threshold, verbose=False)[0]
+class TargetNotFoundError(RuntimeError):
+    """Inference completed, but no detection belongs to the requested class."""
+
+
+def detect(model, frame, product, threshold, diagnostics=None):
+    # Restrict inference output to the requested product. Keep the check below
+    # as a second guard; a different class must never become a grasp target.
+    target_class = product['class_id']
+    result = model.predict(frame['bgr'], conf=threshold, classes=[target_class], verbose=False)[0]
     candidates = []
+    detections = []
+    names = getattr(model, 'names', {})
     for box in result.boxes:
-        if int(box.cls.item()) == product['class_id']:
-            bbox = box.xyxy[0].cpu().numpy()
-            uv = (bbox[:2] + bbox[2:]) / 2
+        class_id = int(box.cls.item())
+        if class_id != target_class:
+            continue
+        bbox = box.xyxy[0].cpu().numpy()
+        uv = (bbox[:2] + bbox[2:]) / 2
+        class_name = names.get(class_id, str(class_id)) if isinstance(names, dict) else str(class_id)
+        detections.append({'class_id': class_id, 'class_name': str(class_name),
+                           'bbox': bbox.tolist(), 'confidence': float(box.conf.item())})
+        if class_id == product['class_id']:
             candidates.append({'bbox': bbox.tolist(), 'uv': uv.tolist(),
                                'confidence': float(box.conf.item())})
+    if diagnostics is not None:
+        diagnostics.update(detections=detections, target_count=len(candidates),
+                           inference_classes=[target_class])
+    if not candidates:
+        raise TargetNotFoundError(
+            f'Expected exactly one target, detected 0 '
+            f'(requested class_id={target_class}, confidence>={threshold:g}; '
+            'check saved color.png and model class mapping)')
     if len(candidates) != 1:
         raise RuntimeError(f'Expected exactly one target, detected {len(candidates)}')
     return candidates[0]
@@ -32,7 +56,7 @@ def load_model(config_path, product):
 
 
 def recognize_product(frame, model, product, config, item_name=None, *,
-                      include_tcp=True, tcp_offset=None):
+                      include_tcp=True, tcp_offset=None, diagnostics=None):
     """Recognize one RGB-D frame and return a dict containing XYZ in mm.
 
     frame: GeminiCamera.capture() result (BGR, aligned depth in mm, intrinsics,
@@ -40,7 +64,7 @@ def recognize_product(frame, model, product, config, item_name=None, *,
     No capture, robot, network, file write, or motion occurs here.
     include_tcp=False needs neither hand-eye calibration nor TCP configuration.
     """
-    detection = detect(model, frame, product, config["confidence"])
+    detection = detect(model, frame, product, config["confidence"], diagnostics)
     point = pixel_to_camera(detection["uv"], frame["depth"], frame["intrinsics"],
                             frame.get("distortion"), **config["depth"])
     report = {"item": item_name, "class_id": product["class_id"], "detection": detection,
@@ -58,16 +82,11 @@ def recognize_product(frame, model, product, config, item_name=None, *,
     return report
 
 
-def save_detection(frame, report, output):
-    """Save annotated image, aligned depth, intrinsics and the localization result."""
+def save_frame(frame, output):
+    """Persist replayable raw evidence independently of detection success."""
     import cv2
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
-    img = frame["bgr"].copy()
-    x1, y1, x2, y2 = map(int, report["detection"]["bbox"])
-    cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-    if not cv2.imwrite(str(output / "detection.jpg"), img):
-        raise IOError("Could not save detection image")
     if not cv2.imwrite(str(output / "color.png"), frame["bgr"]):
         raise IOError("Could not save color image")
     np.save(output / "depth_mm.npy", frame["depth"])
@@ -77,19 +96,75 @@ def save_detection(frame, report, output):
         "distortion": None if distortion is None else np.asarray(distortion).tolist(),
         "serial": frame["serial"],
     })
+
+
+def save_detection(frame, report, output):
+    """Save annotated image, aligned depth, intrinsics and the localization result."""
+    import cv2
+    output = Path(output)
+    save_frame(frame, output)
+    img = frame["bgr"].copy()
+    x1, y1, x2, y2 = map(int, report["detection"]["bbox"])
+    cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    if not cv2.imwrite(str(output / "detection.jpg"), img):
+        raise IOError("Could not save detection image")
     write(output / "result.json", report)
+
+
+def recognize_and_save(frame, model, product, item_name, config, output=None,
+                       receipt_report=None, *, include_tcp=True, tcp_offset=None):
+    """Save the frame before inference; failed recognition never leaves an executable plan."""
+    evidence = {'item': item_name, 'class_id': product['class_id'],
+                'confidence_threshold': config['confidence'],
+                'camera_serial': frame['serial'],
+                'recorded_at_utc': datetime.now(timezone.utc).isoformat(),
+                'status': 'recognition_pending'}
+    if receipt_report is not None:
+        evidence['receipt'] = receipt_report
+    if output is not None:
+        output = Path(output)
+        # Invalidate any earlier plan even if evidence writing subsequently fails.
+        write(output / 'result.json', evidence)
+        save_frame(frame, output)
+        import cv2
+        # Also replace an older successful annotation before inference starts.
+        if not cv2.imwrite(str(output / 'detection.jpg'), frame['bgr']):
+            raise IOError('Could not save detection image')
+    diagnostics = {}
+    try:
+        report = recognize_product(frame, model, product, config, item_name,
+                                   include_tcp=include_tcp, tcp_offset=tcp_offset,
+                                   diagnostics=diagnostics)
+    except (Exception, KeyboardInterrupt) as exc:
+        if output is not None:
+            evidence.update(diagnostics, status='recognition_failed',
+                            error=str(exc), error_type=type(exc).__name__)
+            write(output / 'result.json', evidence)
+            img = frame['bgr'].copy()
+            for detection in diagnostics.get('detections', []):
+                x1, y1, x2, y2 = map(int, detection['bbox'])
+                color = (0, 255, 0) if detection['class_id'] == product['class_id'] else (0, 165, 255)
+                cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+                label = f"id={detection['class_id']} conf={detection['confidence']:.3f}"
+                cv2.putText(img, label, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, .5, color, 1)
+            cv2.putText(img, 'Recognition failed - see result.json', (8, 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, .5, (0, 0, 255), 1)
+            if not cv2.imwrite(str(output / 'detection.jpg'), img):
+                raise IOError('Could not save failed detection image') from exc
+            print(f'Recognition failed; image and diagnostics saved to: {output.resolve()}', flush=True)
+        raise
+    report = {**evidence, **diagnostics, **report}
+    if output is not None:
+        save_detection(frame, report, output)
+    return report
 
 
 def acquire_product(camera, model, product, item_name, config, output=None,
                     receipt_report=None, *, include_tcp=True, tcp_offset=None):
     """Capture one frame; return (camera_xyz_numpy, report). Optionally save evidence."""
     frame = camera.capture()
-    report = recognize_product(frame, model, product, config, item_name,
-                               include_tcp=include_tcp, tcp_offset=tcp_offset)
-    if receipt_report is not None:
-        report["receipt"] = receipt_report
-    if output is not None:
-        save_detection(frame, report, output)
+    report = recognize_and_save(frame, model, product, item_name, config, output,
+                                receipt_report, include_tcp=include_tcp, tcp_offset=tcp_offset)
     return np.asarray(report["camera_point_mm"]), report
 
 
@@ -118,10 +193,8 @@ def locate_product(item_name, config_path=DEFAULT_CONFIG, output=None, *, includ
     model = load_model(config_path, product)
     if frame_dir is not None:
         frame = load_saved_frame(frame_dir)
-        report = recognize_product(frame, model, product, config, canonical_name, include_tcp=include_tcp)
-        if output is not None:
-            save_detection(frame, report, output)
-        return report
+        return recognize_and_save(frame, model, product, canonical_name, config, output,
+                                  include_tcp=include_tcp)
     from .camera import GeminiCamera
     with GeminiCamera(config["camera"]) as camera:
         _, report = acquire_product(camera, model, product, canonical_name, config,

@@ -125,4 +125,4 @@ python -m unittest discover -s vision/tests -v
 python -m unittest discover -s tests -v
 ~~~
 
-完整抓取入口仍为 python -m xarm_grasp --execute。更多接口说明见 [MODULE_GUIDE_ZH.md](../MODULE_GUIDE_ZH.md)。
+完整抓取入口为 python -m xarm_grasp --execute。环境安装、分步测试、代码结构和接口说明统一见 [项目使用手册](../README.md)。

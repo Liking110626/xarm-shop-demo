@@ -79,6 +79,34 @@ class GeometryTests(unittest.TestCase):
         r.__exit__(ValueError); r.arm.set_state.assert_called_once_with(4)
         with self.assertRaises(RuntimeError): checked((1, []), 'test')
 
+    def test_enable_recovers_clean_stop_and_rechecks_state(self):
+        r = Robot({'tcp_offset': [0, 0, 0, 0, 0, 0]}); r.arm = Mock()
+        r.arm.get_err_warn_code.side_effect = [(0, [0, 0]), (0, [0, 0])]
+        r.arm.get_state.side_effect = [(0, 4), (0, 0)]
+        r.arm.get_position.return_value = (0, [300, 0, 200, 0, 0, 0])
+        r.arm.tcp_offset = [0, 0, 0, 0, 0, 0]
+        r.arm.motion_enable.return_value = 0
+        r.arm.set_mode.return_value = 0
+        r.arm.set_state.return_value = 0
+
+        r.enable()
+
+        r.arm.motion_enable.assert_called_once_with(True)
+        r.arm.set_mode.assert_called_once_with(0)
+        r.arm.set_state.assert_called_once_with(0)
+        self.assertTrue(r.motion_session)
+
+    def test_enable_does_not_auto_recover_errors_or_pause(self):
+        for errors, state in (([1, 0], 4), ([0, 0], 3), ([0, 0], 5)):
+            with self.subTest(errors=errors, state=state):
+                r = Robot({'tcp_offset': [0, 0, 0, 0, 0, 0]}); r.arm = Mock()
+                r.arm.get_err_warn_code.return_value = (0, errors)
+                r.arm.get_state.return_value = (0, state)
+                with self.assertRaisesRegex(RuntimeError, 'operator attention'):
+                    r.enable()
+                r.arm.motion_enable.assert_not_called()
+                r.arm.set_state.assert_not_called()
+
     def test_empty_grasp_rejected(self):
         r = Robot({}); r.arm = Mock(); r.arm.robotiq_get_status.return_value = (0, [])
         r.arm.robotiq_status = {'gFLT': 0, 'gOBJ': 3, 'gGTO': 1}

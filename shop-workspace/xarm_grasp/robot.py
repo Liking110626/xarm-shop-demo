@@ -38,21 +38,29 @@ class Robot:
         checked(self.arm.get_position(is_radian=False), "refresh connection")
         return vector(self.arm.tcp_offset, 6, "controller tcp_offset").tolist()
 
-    def ready(self):
+    def ready(self, allow_stopped=False):
         errors = checked(self.arm.get_err_warn_code(), "get_err_warn_code")
         state = checked(self.arm.get_state(), "get_state")
-        if any(errors) or state in (3, 4, 5):
+        blocked_states = (3,) if allow_stopped else (3, 4, 5)
+        if any(errors) or state in blocked_states:
             raise RuntimeError(f"Robot requires operator attention: errors={errors}, state={state}")
+        return state
 
     def enable(self):
-        self.ready()
+        # A failed motion session deliberately leaves the controller in state 4.
+        # A later run may recover that software stop, but must never auto-clear a
+        # controller error/warning or bypass pause/other safety states.
+        state = self.ready(allow_stopped=True)
         expected = vector(self.config["tcp_offset"], 6, "tcp_offset")
         if not np.allclose(self.offset(), expected, atol=0.05):
             raise ValueError("Controller TCP offset differs from config; set it in xArm Studio first")
+        if state == 4:
+            print("Robot is stopped (state=4); attempting automatic recovery")
         self.motion_session = True
         checked(self.arm.motion_enable(True), "motion_enable")
         checked(self.arm.set_mode(0), "set_mode")
         checked(self.arm.set_state(0), "set_state")
+        self.ready()
 
     def preflight(self, pose, bounds):
         check_workspace(pose, bounds)

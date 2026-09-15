@@ -49,6 +49,8 @@ def validate_common_execution(config):
     vector(config['robot']['tcp_offset'], 6, 'tcp_offset')
     validate_observation(config.get('initial_pose'), 'initial pose')
     validate_observation(config.get('grasp_observation'), 'grasp observation')
+    if config.get('grasp_observation_fallback') is not None:
+        validate_observation(config['grasp_observation_fallback'], 'fallback grasp observation')
     for key in ('tcp_speed_mm_s', 'tcp_acc_mm_s2', 'joint_speed_deg_s', 'joint_acc_deg_s2'):
         positive_number(config['robot'][key], key)
     motion = config['tool_motion']
