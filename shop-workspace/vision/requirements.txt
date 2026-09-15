@@ -1,0 +1,8 @@
+numpy>=1.26,<3
+opencv-python>=4.8,<5
+pyorbbecsdk2>=2.1.2,<3
+ultralytics>=8.3,<9
+requests>=2.31,<3
+# pyorbbecsdk2 imports as pyorbbecsdk and includes the Windows native runtime.
+# xArm SDK is loaded from ../xArm-Python-SDK.
+

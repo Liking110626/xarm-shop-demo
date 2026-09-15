@@ -1,0 +1,6 @@
+.test-deps/
+.venv/
+__pycache__/
+runs/
+calibration/
+models/*.pt

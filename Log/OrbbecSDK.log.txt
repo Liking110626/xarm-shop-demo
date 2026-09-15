@@ -1,0 +1,36 @@
+[09/15 18:54:30.008854][info][16644][HostTimestampProvider.cpp:36] Update clock type to: realtime(0)
+[09/15 18:54:30.124022][info][16644][DeviceManager.cpp:25] Current found device(s): (1)
+[09/15 18:54:30.124032][info][16644][DeviceManager.cpp:34] 	- Name: Gemini 336, PID: 0x0803, SN/ID: CP9E1630019L, Connection: USB3.2
+[09/15 18:54:30.124039][info][16644][DeviceManager.cpp:463] Enable net device enumeration: true
+[09/15 18:54:31.152365][info][16644][DeviceManager.cpp:25] Current device(s) list: (1)
+[09/15 18:54:31.152510][info][16644][DeviceManager.cpp:34] 	- Name: Gemini 336, PID: 0x0803, SN/ID: CP9E1630019L, Connection: USB3.2
+[09/15 18:54:31.168425][info][16644][G330Device.cpp:630] UVCAutoRebootOnFault=true for device: Gemini 336
+[09/15 18:54:36.389972][error][16644][WinHelpers.cpp:83] MFCreateDeviceSource(deviceAttrs_, &deviceSource_) returned: HResult 0x80070003: "系统找不到指定的路径。"
+[09/15 18:54:36.390191][warning][16644][ObException.cpp:32] A unrecoverable_exception has occurred!
+ - where: WinHelpers.cpp(84)
+ - msg: MFCreateDeviceSource(deviceAttrs_, &deviceSource_) returned: HResult 0x80070003: "系统找不到指定的路径。"
+ - type: PLATFORM
+ - status: 1
+[09/15 18:54:36.392216][warning][16644][ObException.cpp:32] A unrecoverable_exception has occurred!
+ - where: Protocol.cpp(66)
+ - msg: Request failed, statusCode: 2, msg: Send control transfer failed!, propertyId: 1000
+ - type: IO
+ - status: 1000
+[09/15 19:02:06.084566][info][39644][HostTimestampProvider.cpp:36] Update clock type to: realtime(0)
+[09/15 19:02:06.176152][info][39644][DeviceManager.cpp:25] Current found device(s): (1)
+[09/15 19:02:06.176158][info][39644][DeviceManager.cpp:34] 	- Name: Gemini 336, PID: 0x0803, SN/ID: CP9E1630019L, Connection: USB3.2
+[09/15 19:02:06.176161][info][39644][DeviceManager.cpp:463] Enable net device enumeration: true
+[09/15 19:02:07.208525][info][39644][DeviceManager.cpp:25] Current device(s) list: (1)
+[09/15 19:02:07.208611][info][39644][DeviceManager.cpp:34] 	- Name: Gemini 336, PID: 0x0803, SN/ID: CP9E1630019L, Connection: USB3.2
+[09/15 19:02:07.216047][info][39644][G330Device.cpp:630] UVCAutoRebootOnFault=true for device: Gemini 336
+[09/15 19:02:12.282572][error][39644][WinHelpers.cpp:83] MFCreateDeviceSource(deviceAttrs_, &deviceSource_) returned: HResult 0x80070003: "系统找不到指定的路径。"
+[09/15 19:02:12.284339][warning][39644][ObException.cpp:32] A unrecoverable_exception has occurred!
+ - where: WinHelpers.cpp(84)
+ - msg: MFCreateDeviceSource(deviceAttrs_, &deviceSource_) returned: HResult 0x80070003: "系统找不到指定的路径。"
+ - type: PLATFORM
+ - status: 1
+[09/15 19:02:12.284418][warning][39644][ObException.cpp:32] A unrecoverable_exception has occurred!
+ - where: Protocol.cpp(66)
+ - msg: Request failed, statusCode: 2, msg: Send control transfer failed!, propertyId: 1000
+ - type: IO
+ - status: 1000
