@@ -2,7 +2,7 @@ from pathlib import Path
 import math
 import sys
 import numpy as np
-from .geometry import vector, check_workspace, pose_matrix
+from .coordinates import vector, pose_matrix, check_workspace
 
 
 def checked(result, operation):

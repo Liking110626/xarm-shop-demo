@@ -1,6 +1,6 @@
 import unittest
 
-from xarm_grasp.receipt import (
+from vision.ocr import (
     extract_ocr_text,
     match_receipt_products,
     normalize_receipt_text,

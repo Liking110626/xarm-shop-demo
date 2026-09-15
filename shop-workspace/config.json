@@ -1,5 +1,5 @@
 {
-  "motion_enabled": false,
+  "motion_enabled": true,
   "robot": {
     "ip": "192.168.1.209",
     "tcp_offset": [
@@ -43,7 +43,7 @@
     "jpeg_quality": 95
   },
   "calibration": {
-    "validated": false,
+    "validated": true,
     "camera_serial": "CP9E1630019L",
     "T_flange_camera": [
       [
@@ -72,7 +72,11 @@
       ]
     ]
   },
-  "workspace_mm": null,
+  "workspace_mm":  [
+  [209.1, 690.7],
+  [-716.7, 717.9],
+  [96.1, 584.6]
+  ],
   "confidence": 0.6,
   "depth": {
     "radius": 3,

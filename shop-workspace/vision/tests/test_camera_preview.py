@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from xarm_grasp.camera_preview import colorize_depth, make_preview
+from vision.camera_preview import colorize_depth, make_preview
 
 
 class CameraPreviewTests(unittest.TestCase):

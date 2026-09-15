@@ -2,8 +2,9 @@
 import argparse
 from pathlib import Path
 import numpy as np
-from .__main__ import load, write
-from .geometry import pose_matrix, transform
+from xarm_grasp.config import DEFAULT_CONFIG, load, write
+from . import DATA_DIR
+from xarm_grasp.coordinates import pose_matrix, transform
 
 
 def solve(samples):
@@ -76,8 +77,8 @@ def validate_held_out(samples, calibration, max_translation_mm=3.0, max_rotation
 
 def capture(args):
     import cv2
-    from .camera import GeminiCamera
-    from .robot import Robot
+    from vision.camera import GeminiCamera
+    from xarm_grasp.robot import Robot
     config = load(args.config)
     if args.cols < 3 or args.rows < 3 or not np.isfinite(args.square_mm) or args.square_mm <= 0:
         raise ValueError('Invalid board dimensions')
@@ -129,20 +130,20 @@ def capture(args):
 
 def main():
     parser = argparse.ArgumentParser(description='Eye-in-hand calibration; never commands arm motion')
-    parser.add_argument('--config', default=str(Path(__file__).resolve().parents[1] / 'config.json'))
+    parser.add_argument('--config', default=str(DEFAULT_CONFIG))
     sub = parser.add_subparsers(dest='command', required=True)
     p = sub.add_parser('capture')
-    p.add_argument('--samples', default='calibration/samples.json')
+    p.add_argument('--samples', default=str(DATA_DIR / "samples.json"))
     p.add_argument('--cols', type=int, required=True, help='Inner corner columns')
     p.add_argument('--rows', type=int, required=True, help='Inner corner rows')
     p.add_argument('--square-mm', type=float, required=True)
     p = sub.add_parser('solve')
-    p.add_argument('--samples', default='calibration/samples.json')
-    p.add_argument('--output', default='calibration/result.json')
+    p.add_argument('--samples', default=str(DATA_DIR / "samples.json"))
+    p.add_argument('--output', default=str(DATA_DIR / "result.json"))
     p = sub.add_parser('validate')
-    p.add_argument('--samples', default='calibration/validation_samples.json')
-    p.add_argument('--calibration', default='calibration/result.json')
-    p.add_argument('--output', default='calibration/validation_result.json')
+    p.add_argument('--samples', default=str(DATA_DIR / "validation_samples.json"))
+    p.add_argument('--calibration', default=str(DATA_DIR / "result.json"))
+    p.add_argument('--output', default=str(DATA_DIR / "validation_result.json"))
     p.add_argument('--max-translation-mm', type=float, default=3.0)
     p.add_argument('--max-rotation-deg', type=float, default=1.0)
     args = parser.parse_args()
@@ -163,4 +164,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

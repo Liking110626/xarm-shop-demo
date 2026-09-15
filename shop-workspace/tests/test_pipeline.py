@@ -1,10 +1,10 @@
 import unittest
 from unittest.mock import Mock
 import numpy as np
-from xarm_grasp.geometry import pose_matrix, base_point, depth_at, deproject, make_tool_axis_plan, transform
+from xarm_grasp.coordinates import pose_matrix, camera_to_tcp, tcp_to_base, depth_at, deproject, transform
+from xarm_grasp.motion import make_tool_axis_plan_from_tcp
 from xarm_grasp.robot import Robot, checked
-from xarm_grasp.calibrate import solve, validate_held_out
-from xarm_grasp.__main__ import load, resolve, validate_execution
+from xarm_grasp.config import load, validate_common_execution
 
 MOTION = {'lateral_axis': 'y', 'vertical_axis': 'x', 'depth_axis': 'z', 'approach_axis_sign': 1, 'lift_axis_sign': -1, 'lift_mm': 20, 'axis_deadband_mm': 1, 'max_alignment_mm': 300,
           'min_approach_mm': 20, 'max_approach_mm': 600,
@@ -13,8 +13,9 @@ MOTION = {'lateral_axis': 'y', 'vertical_axis': 'x', 'depth_axis': 'z', 'approac
 
 class GeometryTests(unittest.TestCase):
     def test_camera_to_base_removes_tcp_offset(self):
-        actual = base_point([10, 0, 500], [300, 20, 300, 0, 0, 90],
-                            [0, 0, 100, 0, 0, 0], pose_matrix([20, 0, 0, 0, 0, 0]))
+        point_tcp = camera_to_tcp([10, 0, 500], [0, 0, 100, 0, 0, 0],
+                                  pose_matrix([20, 0, 0, 0, 0, 0]))
+        actual = tcp_to_base(point_tcp, [300, 20, 300, 0, 0, 90])
         np.testing.assert_allclose(actual, [300, 50, 700], atol=1e-8)
 
     def test_deprojection_and_depth_rejection(self):
@@ -28,8 +29,8 @@ class GeometryTests(unittest.TestCase):
 
     def test_tool_axis_plan_keeps_orientation_and_order(self):
         tcp = [300, 0, 200, 0, 90, 0]
-        point = np.array(tcp[:3]) + pose_matrix(tcp)[:3, :3] @ np.array([30, 20, 100])
-        plan = make_tool_axis_plan(point, tcp, 30, MOTION, [[0, 700], [-500, 500], [0, 600]])
+        point = [30, 20, 100]
+        plan = make_tool_axis_plan_from_tcp(point, tcp, 30, MOTION, [[0, 700], [-500, 500], [0, 600]])
         self.assertEqual(plan['axis_roles'], {'lateral': 'y', 'vertical': 'x', 'depth': 'z'})
         self.assertEqual(plan['axis_signs'], {'approach': 1, 'lift': -1})
         self.assertEqual([s['name'] for s in plan['steps']],
@@ -41,23 +42,25 @@ class GeometryTests(unittest.TestCase):
     def test_tool_axis_plan_rejects_bad_geometry(self):
         with self.assertRaisesRegex(ValueError, 'tool X- lift direction'):
             bad_pose = [300, 0, 200, 0, 0, 0]
-            point = np.array(bad_pose[:3]) + pose_matrix(bad_pose)[:3, :3] @ np.array([30, 0, 100])
-            make_tool_axis_plan(point, bad_pose, 30, MOTION,
+            point = [30, 0, 100]
+            make_tool_axis_plan_from_tcp(point, bad_pose, 30, MOTION,
                                 [[0, 700], [-500, 500], [0, 600]])
         good_pose = [300, 0, 200, 0, 90, 0]
-        behind = np.array(good_pose[:3]) + pose_matrix(good_pose)[:3, :3] @ np.array([0, 0, -100])
+        behind = [0, 0, -100]
         with self.assertRaisesRegex(ValueError, 'Z\\+'):
-            make_tool_axis_plan(behind, good_pose, 30, MOTION,
+            make_tool_axis_plan_from_tcp(behind, good_pose, 30, MOTION,
                                 [[0, 700], [-500, 500], [0, 600]])
         bad = np.eye(4); bad[0, 0] = -1
         with self.assertRaises(ValueError):
             transform(bad)
     def test_placeholder_config_rejects_motion(self):
         from pathlib import Path
-        c = load(Path(__file__).resolve().parents[1] / 'config.json'); p = resolve(c, '雪碧')
-        with self.assertRaises(ValueError): validate_execution(c, p)
+        c = load(Path(__file__).resolve().parents[1] / 'config.json')
+        c['motion_enabled'] = False
+        with self.assertRaises(ValueError): validate_common_execution(c)
         c['motion_enabled'] = True
-        with self.assertRaises(ValueError): validate_execution(c, p)
+        c['workspace_mm'] = None
+        with self.assertRaises(ValueError): validate_common_execution(c)
 
     def test_tool_move_commands_translation_only(self):
         r = Robot({'tcp_speed_mm_s': 20, 'tcp_acc_mm_s2': 100}); r.arm = Mock()
@@ -82,23 +85,5 @@ class GeometryTests(unittest.TestCase):
         with self.assertRaises(RuntimeError): r.verify_grasp()
         r.arm.robotiq_status['gOBJ'] = 2; r.verify_grasp()
 
-    def test_synthetic_handeye_recovers_transform(self):
-        rng = np.random.default_rng(42); x = pose_matrix([30, -45, 70, 10, 20, -15])
-        base_board = pose_matrix([500, 30, 100, 0, 0, 0]); samples = []
-        for _ in range(18):
-            a = pose_matrix(np.r_[rng.uniform(100, 400, 3), rng.uniform(-60, 60, 3)])
-            b = np.linalg.inv(x) @ np.linalg.inv(a) @ base_board
-            samples.append({'camera_serial': 'test', 'T_base_flange': a.tolist(), 'T_camera_board': b.tolist()})
-        result = solve(samples); np.testing.assert_allclose(result['T_flange_camera'], x, atol=1e-6)
-        self.assertFalse(result['validated'])
-        checked_result = validate_held_out(samples[:6], result)
-        self.assertTrue(checked_result['held_out_consistency_passed'])
-        self.assertFalse(checked_result['validated'])
-        with self.assertRaises(ValueError): solve([samples[0]] * 12)
 
 if __name__ == '__main__': unittest.main()
-
-
-
-
-

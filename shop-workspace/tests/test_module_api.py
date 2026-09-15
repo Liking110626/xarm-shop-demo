@@ -1,0 +1,241 @@
+"""Offline API and orchestration regression tests; all devices/network are mocked."""
+import io
+import json
+import tempfile
+import unittest
+from contextlib import redirect_stdout
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+import numpy as np
+
+from xarm_grasp.coordinates import camera_to_tcp, pose_matrix, tcp_to_base
+from xarm_grasp.motion import make_tool_axis_plan_from_tcp
+from vision.ocr import recognize_receipt, recognize_receipt_file
+from xarm_grasp.__main__ import run
+from vision.yolo import (get_product_position, load_saved_frame, locate_product,
+                             recognize_product, save_detection)
+
+
+def fixture():
+    product = {"class_id": 1, "aliases": ["sprite"], "model": "products.pt",
+               "grasp_depth_offset_mm": 27, "open_position": 0, "close_position": 85}
+    config = {
+        "motion_enabled": True,
+        "confidence": .6, "depth": {},
+        "camera": {"serial": "test-camera"},
+        "robot": {"tcp_offset": [0, 0, 174, 0, 0, 0], "tcp_speed_mm_s": 20,
+                  "tcp_acc_mm_s2": 100, "joint_speed_deg_s": 5, "joint_acc_deg_s2": 20},
+        "calibration": {"camera_serial": "test-camera", "validated": True,
+                        "T_flange_camera": pose_matrix([30, 20, -226, 0, 0, 0]).tolist()},
+        "products": {"Sprite": product},
+        "initial_pose": {"type": "joint", "values": [0] * 6},
+        "grasp_observation": {"type": "joint", "values": [2] * 6},
+        "receipt": {"observation": {"type": "joint", "values": [1] * 6}},
+        "workspace_mm": [[0, 700], [-500, 500], [0, 600]],
+        "tool_motion": {
+            "lateral_axis": "y", "vertical_axis": "x", "depth_axis": "z",
+            "approach_axis_sign": 1, "lift_axis_sign": -1,
+            "lift_mm": 20, "axis_deadband_mm": 1, "max_alignment_mm": 300,
+            "min_approach_mm": 20, "max_approach_mm": 600,
+            "vertical_axis_min_up_component": .7,
+            "position_tolerance_mm": 2, "orientation_tolerance_deg": .5,
+        },
+    }
+    frame = {"bgr": np.zeros((64, 64, 3), np.uint8),
+             "depth": np.full((64, 64), 500., np.float32),
+             "intrinsics": [500, 500, 32, 32], "distortion": None, "serial": "test-camera"}
+    return config, product, frame
+
+
+def box(class_id=1):
+    value = Mock()
+    value.cls.item.return_value = class_id
+    value.conf.item.return_value = .9
+    value.xyxy = [Mock()]
+    value.xyxy[0].cpu.return_value.numpy.return_value = np.array([20, 20, 44, 44])
+    return value
+
+
+def model_with(*boxes):
+    model = Mock()
+    model.predict.return_value = [SimpleNamespace(boxes=list(boxes))]
+    return model
+
+
+class LocalizationTests(unittest.TestCase):
+    def test_camera_to_tcp_inverts_full_offset_including_rotation(self):
+        # TCP origin in flange is [10,20,30], TCP orientation is +90 about Z.
+        actual = camera_to_tcp([10, 120, 30], [10, 20, 30, 0, 0, 90], np.eye(4))
+        np.testing.assert_allclose(actual, [100, 0, 0], atol=1e-8)
+        np.testing.assert_allclose(tcp_to_base(actual, [300, 0, 200, 0, 0, 90]),
+                                   [300, 100, 200], atol=1e-8)
+
+    def test_frame_function_returns_both_frames_without_applying_grasp_offset(self):
+        config, product, frame = fixture()
+        result = recognize_product(frame, model_with(box(2), box()), product, config, "Sprite")
+        np.testing.assert_allclose(result["camera_point_mm"], [0, 0, 500])
+        np.testing.assert_allclose(result["tcp_point_mm"], [30, 20, 100])
+        plan = make_tool_axis_plan_from_tcp(result["tcp_point_mm"], [300, 0, 200, 0, 90, 0],
+                                            27, config["tool_motion"], config["workspace_mm"])
+        np.testing.assert_allclose(plan["target_delta_tool_mm"], [30, 20, 127])
+        self.assertEqual([s["delta_tool_mm"] for s in plan["steps"]],
+                         [[0, 20, 0], [30, 0, 0], [0, 0, 127], [-20, 0, 0], [0, 0, -127]])
+
+    def test_camera_only_needs_no_calibration_or_robot_config(self):
+        config, product, frame = fixture()
+        del config["calibration"], config["robot"]
+        report = recognize_product(frame, model_with(box()), product, config, include_tcp=False)
+        self.assertNotIn("tcp_point_mm", report)
+        self.assertEqual(report["camera_point_mm"], [0, 0, 500])
+
+    def test_bad_depth_wrong_serial_and_ambiguous_detections_raise(self):
+        config, product, frame = fixture()
+        for boxes in ([], [box(), box()]):
+            with self.assertRaisesRegex(RuntimeError, "exactly one target"):
+                recognize_product(frame, model_with(*boxes), product, config)
+        frame["serial"] = "different-camera"
+        with self.assertRaisesRegex(ValueError, "differs"):
+            recognize_product(frame, model_with(box()), product, config)
+        frame["serial"] = "test-camera"
+        frame["depth"][:] = 0
+        with self.assertRaisesRegex(ValueError, "Insufficient valid depth"):
+            recognize_product(frame, model_with(box()), product, config)
+
+    def test_capture_helper_and_xyz_helper_close_camera_without_robot(self):
+        config, product, frame = fixture()
+        with patch("vision.yolo.load", return_value=config), \
+             patch("vision.yolo.load_model", return_value=model_with(box())), \
+             patch("vision.camera.GeminiCamera") as camera_cls, \
+             patch("xarm_grasp.robot.Robot") as robot_cls:
+            camera = camera_cls.return_value.__enter__.return_value
+            camera.capture.return_value = frame
+            point = get_product_position("sprite")
+            np.testing.assert_allclose(point, [30, 20, 100])
+            camera_cls.return_value.__exit__.assert_called_once()
+            robot_cls.assert_not_called()
+            with self.assertRaises(ValueError):
+                get_product_position("sprite", coordinate_system="base")
+
+    def test_saved_frame_replays_without_camera_and_preserves_raw_pixels(self):
+        config, product, frame = fixture()
+        model = model_with(box())
+        report = recognize_product(frame, model, product, config)
+        with tempfile.TemporaryDirectory() as tmp:
+            save_detection(frame, report, tmp)
+            restored = load_saved_frame(tmp)
+            np.testing.assert_array_equal(restored["bgr"], frame["bgr"])
+            np.testing.assert_array_equal(restored["depth"], frame["depth"])
+            with patch("vision.yolo.load_model", return_value=model), \
+                 patch("vision.camera.GeminiCamera") as camera_cls:
+                path = Path(tmp) / "config.json"
+                path.write_text(json.dumps(config), encoding="utf-8")
+                replay = locate_product("sprite", path, frame_dir=tmp)
+                self.assertEqual(replay["tcp_point_mm"], report["tcp_point_mm"])
+                camera_cls.assert_not_called()
+
+
+class OcrFunctionTests(unittest.TestCase):
+    def test_returns_selected_item_without_requiring_output_directory(self):
+        config, _, frame = fixture()
+        response = Mock()
+        response.json.return_value = {"md_results": "sprite"}
+        with patch.dict("os.environ", {"ZHIPUAI_API_KEY": "test-only"}), \
+             patch("requests.post", return_value=response), \
+             patch("cv2.imwrite") as save:
+            result = recognize_receipt(frame["bgr"], config)
+            self.assertEqual(result["selected_item"], "Sprite")
+            save.assert_not_called()
+
+    def test_ocr_file_outputs_evidence_and_rejects_multiple_products(self):
+        import cv2
+        config, product, frame = fixture()
+        config["products"]["Fanta"] = {**product, "aliases": ["fanta"]}
+        response = Mock()
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.dict("os.environ", {"ZHIPUAI_API_KEY": "test-only"}), \
+             patch("requests.post", return_value=response):
+            path = Path(tmp) / "input.png"
+            cv2.imencode(".png", frame["bgr"])[1].tofile(path)
+            response.json.return_value = {"md_results": "sprite"}
+            result = recognize_receipt_file(path, config, tmp)
+            self.assertEqual(result["selected_item"], "Sprite")
+            self.assertTrue((Path(tmp) / "receipt" / "receipt_ocr.json").is_file())
+            response.json.return_value = {"md_results": "sprite fanta"}
+            with self.assertRaisesRegex(ValueError, "multiple configured"):
+                recognize_receipt_file(path, config, tmp)
+            rejected = json.loads((Path(tmp) / "receipt" / "receipt_result.json").read_text())
+            self.assertEqual(rejected["status"], "rejected")
+
+
+class WorkflowTests(unittest.TestCase):
+    def exercise_workflow(self, plan_only=False, preflight_failure=False):
+        config, _, frame = fixture()
+        events = []
+        robot = Mock()
+        robot.pose.return_value = [300, 0, 200, 0, 90, 0]
+        robot.offset.return_value = config["robot"]["tcp_offset"]
+        robot.observe.side_effect = lambda observation, bounds: events.append(("pose", observation["values"][0]))
+        robot.activate_gripper.side_effect = lambda: events.append(("activate",))
+        robot.gripper.side_effect = lambda position: events.append(("gripper", position))
+        robot.move_tool.side_effect = lambda delta, *args: events.append(("move", delta))
+        if preflight_failure:
+            robot.preflight.side_effect = ValueError("IK failed")
+
+        def ocr(*args):
+            events.append(("ocr",))
+            return {"selected_item": "Sprite"}
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch("xarm_grasp.__main__.load", return_value=config), \
+             patch("xarm_grasp.__main__.load_model", return_value=model_with(box())), \
+             patch("xarm_grasp.__main__.validate_receipt_settings"), \
+             patch("xarm_grasp.__main__.recognize_receipt_frame", side_effect=ocr), \
+             patch("vision.camera.GeminiCamera") as camera_cls, \
+             patch("xarm_grasp.robot.Robot") as robot_cls, \
+             patch("time.sleep"), redirect_stdout(io.StringIO()):
+            camera = camera_cls.return_value.__enter__.return_value
+            camera.serial = "test-camera"
+            camera.capture.return_value = frame
+            robot_cls.return_value.__enter__.return_value = robot
+            args = SimpleNamespace(config="config.json", output=tmp, item=None,
+                                   receipt_image=None, execute=True, plan_only=plan_only)
+            if preflight_failure:
+                with self.assertRaisesRegex(ValueError, "IK failed"):
+                    run(args)
+                robot.activate_gripper.assert_not_called()
+                robot.move_tool.assert_not_called()
+                return
+            run(args)
+            result = json.loads((Path(tmp) / "result.json").read_text(encoding="utf-8"))
+        self.assertEqual(robot.preflight.call_count, 5)
+        self.assertEqual(events[:4], [("pose", 0), ("pose", 1), ("ocr",), ("pose", 0)])
+        self.assertEqual(events[4], ("pose", 2))
+        self.assertEqual(events[-1], ("pose", 0))
+        if plan_only:
+            robot.activate_gripper.assert_not_called()
+            robot.gripper.assert_not_called()
+            robot.move_tool.assert_not_called()
+            self.assertEqual(result["status"], "planned_no_grasp_returned_to_initial")
+        else:
+            self.assertEqual(events[5:-1], [
+                ("activate",), ("gripper", 0), ("move", [0, 20, 0]),
+                ("move", [30, 0, 0]), ("move", [0, 0, 127]),
+                ("gripper", 85), ("move", [-20, 0, 0]), ("move", [0, 0, -127]),
+            ])
+            self.assertEqual(robot.verify_grasp.call_count, 3)
+            self.assertEqual(result["status"], "holding_object_at_initial_pose")
+
+    def test_receipt_to_grasp_order_and_return(self):
+        self.exercise_workflow()
+
+    def test_plan_only_observes_but_never_moves_gripper_or_grasp_axes(self):
+        self.exercise_workflow(plan_only=True)
+
+    def test_preflight_failure_prevents_grasp(self):
+        self.exercise_workflow(preflight_failure=True)
+
+
+if __name__ == "__main__":
+    unittest.main()

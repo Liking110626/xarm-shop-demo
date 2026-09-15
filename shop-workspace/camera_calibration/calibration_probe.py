@@ -13,11 +13,11 @@ import uuid
 import cv2
 import numpy as np
 
-from .__main__ import load, write
-from .geometry import pose_matrix
+from xarm_grasp.config import DEFAULT_CONFIG, load, write
+from . import DATA_DIR
+from xarm_grasp.coordinates import pose_matrix
 
 
-DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / "config.json"
 LIMITS = {"robot_translation_mm": 0.1, "robot_rotation_deg": 0.1,
           "joint_rotation_deg": 0.1, "vision_translation_mm": 0.5,
           "vision_rotation_deg": 0.2, "reprojection_px": 1.0,
@@ -119,7 +119,7 @@ def estimate_board(points, corners, k, distortion):
 
 
 def snapshot(robot):
-    from .robot import checked
+    from xarm_grasp.robot import checked
     started = time.monotonic_ns()
     tcp = robot.pose()
     offset = robot.offset()
@@ -186,8 +186,8 @@ def summarize(records):
 
 
 def capture(args):
-    from .camera import GeminiCamera
-    from .robot import Robot
+    from vision.camera import GeminiCamera
+    from xarm_grasp.robot import Robot
     config = load(args.config)
     suffix = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
     path = Path(args.output) / (args.label + "_" + suffix)
@@ -310,7 +310,7 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("capture", help="Capture one stationary burst; no robot motion")
     p.add_argument("--config", default=str(DEFAULT_CONFIG))
-    p.add_argument("--output", default="calibration/probe_v1")
+    p.add_argument("--output", default=str(DATA_DIR / "probe_v1"))
     p.add_argument("--label", required=True, help="e.g. A1, B1, C1, A2; letters/digits/_/- only")
     p.add_argument("--frames", type=int, default=20)
     p.add_argument("--cols", type=int, default=9)
@@ -318,7 +318,7 @@ def main():
     p.add_argument("--square-mm", type=float, default=24.0)
     p.add_argument("--interval", type=float, default=0.1)
     p = sub.add_parser("compare", help="Offline comparison of captured bursts")
-    p.add_argument("--input", default="calibration/probe_v1")
+    p.add_argument("--input", default=str(DATA_DIR / "probe_v1"))
     args = parser.parse_args()
     if args.command == "capture":
         if (not args.label or any(not (c.isascii() and (c.isalnum() or c in "_-")) for c in args.label)

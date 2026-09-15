@@ -3,7 +3,7 @@ import argparse
 import json
 from pathlib import Path
 import numpy as np
-from .__main__ import load, write
+from xarm_grasp.config import load, write
 from .camera import GeminiCamera
 
 

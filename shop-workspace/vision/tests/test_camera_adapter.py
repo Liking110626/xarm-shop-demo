@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from xarm_grasp.camera import _frame_to_bgr, _select_color_profile
+from vision.camera import _frame_to_bgr, _select_color_profile
 
 
 class Format:

@@ -9,9 +9,9 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 
-from xarm_grasp import calibration_probe as probe
-from xarm_grasp.__main__ import load, write
-from xarm_grasp.geometry import pose_matrix
+from camera_calibration import calibration_probe as probe
+from xarm_grasp.config import load, write
+from xarm_grasp.coordinates import pose_matrix
 
 
 def robot_record(pose=None):
@@ -96,7 +96,7 @@ class ProbeTests(unittest.TestCase):
             write(config, {"camera": {}, "robot": {"ip": "test"}})
             args = argparse.Namespace(config=str(config), output=folder, label="A1", frames=5,
                                       cols=9, rows=6, square_mm=24., interval=0.)
-            with patch("xarm_grasp.camera.GeminiCamera", Camera), patch("xarm_grasp.robot.Robot", Robot), \
+            with patch("vision.camera.GeminiCamera", Camera), patch("xarm_grasp.robot.Robot", Robot), \
                     patch.object(probe, "snapshot", return_value=robot_record()), \
                     patch.object(cv2, "findChessboardCornersSB", return_value=(True, corners)), \
                     patch.object(probe, "estimate_board", return_value=vision), contextlib.redirect_stdout(io.StringIO()):

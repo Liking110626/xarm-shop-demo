@@ -1,12 +1,14 @@
 # 小票驱动的 xArm 商品抓取
 
-新电脑部署、硬件联调、标定和首次抓取验收请阅读 [HANDOFF_GUIDE_ZH.md](HANDOFF_GUIDE_ZH.md)。新增 OCR/YOLO 的原始资料保留在 `vision/`，正式运行入口统一为 `python -m xarm_grasp`。
+代码已按运动、坐标转换、YOLO、OCR 拆分。模块职责、函数调用和独立测试见 [MODULE_GUIDE_ZH.md](MODULE_GUIDE_ZH.md)。完整流程入口为 `python -m xarm_grasp`。
 
 硬件为 xArm 6、腕部 Orbbec Gemini 336 和末端 Robotiq 2F-85，控制器 IP 为 `192.168.1.209`。
 
-默认真实流程：机械臂先移动到安全的 `initial_pose` → 移动到小票观察位 → 腕部相机拍摄桌面小票 → GLM-OCR 读取文字 → 严格匹配 `config.json` 中一个商品 → 经 `initial_pose` 返回 → 移动到所有商品共用的抓取预备位 → YOLO 只识别对应类别 → RGB-D 反投影和手眼坐标转换 → 保持 TCP 朝向不变，依次沿工具 Y 左右对齐、工具 X 上下对齐、工具 Z 深入 → 闭合夹爪 → 工具 X 轻抬 → 工具 Z 退出。
+默认真实流程：机械臂先移动到安全的 `initial_pose` → 移动到小票观察位 → 腕部相机拍摄桌面小票 → GLM-OCR 读取文字 → 严格匹配 `config.json` 中一个商品 → 经 `initial_pose` 返回 → 移动到所有商品共用的抓取预备位 → YOLO 只识别对应类别 → RGB-D 反投影和手眼坐标转换 → 保持 TCP 朝向不变，依次沿工具 Y 左右对齐、工具 X 上下对齐、工具 Z 深入 → 闭合夹爪 → 工具 X 轻抬 → 工具 Z 退出 → 携带商品回到 `initial_pose`。
 
-若小票没有匹配商品或同时出现多个商品种类，程序停止。当前没有放置动作，所以一张小票暂时只允许一个商品种类，抓取结束后保持夹持。
+若小票没有匹配商品或同时出现多个商品种类，程序停止。当前没有放置动作，所以一张小票暂时只允许一个商品种类，抓取结束后保持夹持，并回到 `initial_pose`。
+
+视觉相关脚本集中在 [vision](vision/README.md)，标定集中在 [camera_calibration](camera_calibration/README.md)，完整抓取调度和机械臂运动位于 xarm_grasp。
 
 ## 1. 安装
 
@@ -23,19 +25,19 @@ python -m pip install -r requirements.txt
 
 ```powershell
 python ..\pyorbbecsdk\scripts\env_setup\setup_env.py
-python -m xarm_grasp.check_camera
+python -m vision.check_camera
 ```
 
 实时查看彩色相机画面（`Q`/`Esc` 退出，`S` 保存当前帧）：
 
 ```powershell
-python -m xarm_grasp.camera_preview
+python -m vision.camera_preview
 ```
 
 同时查看与彩色画面对齐的深度图：
 
 ```powershell
-python -m xarm_grasp.camera_preview --show-depth
+python -m vision.camera_preview --show-depth
 ```
 
 ## 2. 小票 OCR 配置
@@ -93,16 +95,18 @@ python -m xarm_grasp.teach --type tcp
 
 ## 4. 眼在手上标定
 
+标定脚本、诊断工具、测试及数据统一放在 [camera_calibration](camera_calibration/README.md)。默认输出目录为 camera_calibration/data/。
+
 固定棋盘格，测量真实格边，手动移动机械臂采集 15–25 个具有位置和多轴旋转变化的位姿。示例为 9×6 内角点、25 mm 格边，实际命令必须换成实测尺寸：
 
 ```powershell
-python -m xarm_grasp.calibrate capture --cols 9 --rows 6 --square-mm 25
-python -m xarm_grasp.calibrate solve
+python -m camera_calibration capture --cols 9 --rows 6 --square-mm 25
+python -m camera_calibration solve
 ```
 
 把结果的 `camera_serial` 和 `T_flange_camera` 写入 `config.json.calibration`。使用未参加求解的固定点验证精度后，才设置 `calibration.validated: true`。
 
-完整校准顺序、命令和验收标准见 [CALIBRATION_GUIDE_ZH.md](CALIBRATION_GUIDE_ZH.md)。
+标定子命令说明可通过 python -m camera_calibration --help 查看；坐标转换的独立检查见 [MODULE_GUIDE_ZH.md](MODULE_GUIDE_ZH.md)。
 
 ## 5. 调试和执行入口
 
@@ -145,6 +149,3 @@ python -m unittest discover -s tests -v
 ```
 
 测试不连接相机和机械臂，覆盖坐标转换、工具轴计划、机械臂模拟、安全门禁以及小票文字到商品配置的严格映射。OCR 网络请求、RGB-D 实机、手眼精度和真实抓取仍需接入硬件后验证。
-
-
-

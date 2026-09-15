@@ -83,8 +83,8 @@ def validate_receipt_settings(config):
         raise ValueError("receipt.jpeg_quality must be in 1..100")
     return receipt, api_key, timeout, quality
 
-def recognize_receipt(bgr, config, output_dir):
-    """Call GLM-OCR for one BGR image, persist evidence, and select one product."""
+def recognize_receipt(bgr, config, output_dir=None):
+    """Call GLM-OCR and return selected_item/ocr_text; optionally save evidence."""
     import cv2
     import requests
 
@@ -121,13 +121,14 @@ def recognize_receipt(bgr, config, output_dir):
     text = extract_ocr_text(raw)
     if not text:
         raise RuntimeError("Receipt OCR returned no md_results text")
-    output = Path(output_dir)
-    output.mkdir(parents=True, exist_ok=True)
-    if not cv2.imwrite(str(output / "receipt.jpg"), bgr):
-        raise IOError("Could not save receipt image")
-    (output / "receipt_ocr.md").write_text(text + "\n", encoding="utf-8")
-    (output / "receipt_ocr.json").write_text(
-        json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+    output = Path(output_dir) if output_dir is not None else None
+    if output is not None:
+        output.mkdir(parents=True, exist_ok=True)
+        if not cv2.imwrite(str(output / "receipt.jpg"), bgr):
+            raise IOError("Could not save receipt image")
+        (output / "receipt_ocr.md").write_text(text + "\n", encoding="utf-8")
+        (output / "receipt_ocr.json").write_text(
+            json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
     matches = match_receipt_products(text, config)
     try:
         selected = select_receipt_product(text, config)
@@ -138,17 +139,57 @@ def recognize_receipt(bgr, config, output_dir):
             "status": "rejected",
             "error": str(exc),
         }
-        (output / "receipt_result.json").write_text(
-            json.dumps(rejected, ensure_ascii=False, indent=2), encoding="utf-8")
+        if output is not None:
+            (output / "receipt_result.json").write_text(
+                json.dumps(rejected, ensure_ascii=False, indent=2), encoding="utf-8")
         raise
     result = {
         "ocr_text": text,
         "requested_items": [selected],
         "selected_item": selected["name"],
     }
-    (output / "receipt_result.json").write_text(
-        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    if output is not None:
+        (output / "receipt_result.json").write_text(
+            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     return result
 
 
+def recognize_receipt_frame(frame, config, output=None):
+    """OCR a captured frame; optionally save under output/receipt/."""
+    return recognize_receipt(frame['bgr'], config, None if output is None else Path(output) / 'receipt')
 
+
+def recognize_receipt_file(image_path, config, output=None):
+    """OCR an existing image; optionally save under output/receipt/."""
+    import cv2
+    import numpy as np
+    path = Path(image_path).expanduser().resolve()
+    image = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        raise FileNotFoundError(f'Could not read receipt image: {path}')
+    return recognize_receipt(image, config, None if output is None else Path(output) / 'receipt')
+
+
+def main():
+    import argparse
+    from xarm_grasp.config import DEFAULT_CONFIG, load
+    parser = argparse.ArgumentParser(description="Receipt OCR and product matching; no robot motion")
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG))
+    parser.add_argument("--image", help="Existing image; omit to capture from Gemini")
+    parser.add_argument("--output", default="runs/ocr_test")
+    args = parser.parse_args()
+    try:
+        config = load(args.config)
+        if args.image:
+            result = recognize_receipt_file(args.image, config, args.output)
+        else:
+            from .camera import GeminiCamera
+            with GeminiCamera(config["camera"]) as camera:
+                result = recognize_receipt_frame(camera.capture(), config, args.output)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    except (Exception, KeyboardInterrupt) as exc:
+        parser.exit(1, f"Stopped: {exc}\n")
+
+
+if __name__ == "__main__":
+    main()
